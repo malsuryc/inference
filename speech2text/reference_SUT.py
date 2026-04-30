@@ -33,8 +33,12 @@ import torch
 import torch.multiprocessing as mp
 from vllm import LLM, SamplingParams
 
-# Optimization packages
-from numa import schedule, memory
+# Optimization packages (optional — only needed for CPU NUMA pinning)
+try:
+    from numa import schedule, memory
+    _HAS_NUMA = True
+except ImportError:
+    _HAS_NUMA = False
 
 # Local python packages
 from QSL import AudioQSL, AudioQSLInMemory
@@ -52,10 +56,9 @@ def get_start_cores(start_cores="0"):
 
 cores_per_inst = int(os.environ.get("CORES_PER_INST", "1"))
 num_numa_nodes = int(os.environ.get("NUM_NUMA_NODES", "1"))
-nodes_per_inst = int(os.environ["NUM_NUMA_NODES"]
-                     ) / int(os.environ["NUM_INSTS"])
-insts_per_node = int(os.environ["INSTS_PER_NODE"])
-start_cores = os.environ["START_CORES"]
+nodes_per_inst = float(os.environ.get("NUM_NUMA_NODES", "1")) / float(os.environ.get("NUM_INSTS", "1"))
+insts_per_node = int(os.environ.get("INSTS_PER_NODE", "1"))
+start_cores = os.environ.get("START_CORES", "0")
 
 precision = torch.float32
 n_mels = 128
@@ -154,11 +157,16 @@ class Instance(mp.Process):
         self.finished = False
 
     def run(self):
-        node_list = tuple([math.floor(node) for node in self.node_list])
-        memory.set_membind_nodes(*node_list)
-        schedule.run_on_cpus(os.getpid(), *self.core_list)
-        print(f"Binding rank {self.rank} to nodes {node_list}")
-        print(f"Binding rank {self.rank} to cores {self.core_list}")
+        if self.device == "cpu" and _HAS_NUMA:
+            node_list = tuple([math.floor(node) for node in self.node_list])
+            memory.set_membind_nodes(*node_list)
+            schedule.run_on_cpus(os.getpid(), *self.core_list)
+            print(f"Binding rank {self.rank} to nodes {node_list}")
+            print(f"Binding rank {self.rank} to cores {self.core_list}")
+        else:
+            # GPU path: assign one device per worker before CUDA init
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(self.rank)
+            print(f"Binding rank {self.rank} to CUDA device {self.rank}")
 
         dataset_vocab = labels
 
@@ -172,19 +180,22 @@ class Instance(mp.Process):
 
         dtype = "bfloat16"
         print(f"Precision: {dtype}")
-        model = LLM(
+        llm_kwargs = dict(
             model=self.model_path,
             dtype=dtype,
             skip_tokenizer_init=False,
             trust_remote_code=True,
             tensor_parallel_size=1,
-            max_num_seqs=64,
+            max_num_seqs=int(os.environ.get("WHISPER_MAX_NUM_SEQS", "64")),
             max_model_len=448,
-            max_num_batched_tokens=800,
-            gpu_memory_utilization=0.95,
+            max_num_batched_tokens=int(os.environ.get("WHISPER_MAX_BATCHED_TOKENS", "800")),
+            gpu_memory_utilization=float(os.environ.get("WHISPER_GPU_MEM_UTIL", "0.90")),
             num_scheduler_steps=1,
             limit_mm_per_prompt={"audio": 1},
         )
+        if self.device == "cpu":
+            llm_kwargs["device"] = "cpu"
+        model = LLM(**llm_kwargs)
         sampling_params = SamplingParams(
             temperature=0,
             top_p=1.0,
@@ -301,7 +312,9 @@ class vllmSUT:
                                 cores_per_inst)))
 
         for j in range(self.num_workers):
-            core_list = core_lists[j]
+            # On GPU path core_lists may be shorter than num_workers;
+            # provide a safe fallback since NUMA pinning is skipped.
+            core_list = core_lists[j] if j < len(core_lists) else [0]
 
             worker = Instance(
                 model_path=self.model_path,
