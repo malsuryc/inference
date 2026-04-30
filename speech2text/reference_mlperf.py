@@ -18,6 +18,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
+import torch
 import mlperf_loadgen as lg
 from reference_SUT import vllmSUT
 
@@ -70,12 +71,13 @@ def main():
     log_path = args.log_dir
     os.makedirs(log_path, exist_ok=True)
 
+    device = os.environ.get("WHISPER_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
     sut = vllmSUT(args.dataset_dir,
                   args.manifest,
                   args.perf_count,
                   args.model_path,
                   num_workers=args.num_workers,
-                  device="cpu")
+                  device=device)
     sut.start()
 
     settings = lg.TestSettings()
