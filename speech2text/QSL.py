@@ -16,7 +16,15 @@
 # Standard packages
 import sys
 import os
-from multiprocessing import Pool
+import multiprocessing as _mp
+
+# The audio loader Pool runs in worker processes BEFORE CUDA is initialized,
+# so fork is safe and lets children inherit Manifest_Global. The top-level
+# script sets the global start method to 'spawn' (required for vLLM/CUDA);
+# without forcing 'fork' here the grandchildren would re-import this module
+# and see Manifest_Global == None.
+_FORK_CTX = _mp.get_context("fork")
+Pool = _FORK_CTX.Pool
 
 # Installed packages
 import numpy as np
