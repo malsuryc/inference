@@ -19,8 +19,18 @@ import subprocess
 from pathlib import Path
 
 import torch
+import torch.multiprocessing as mp
 import mlperf_loadgen as lg
 from reference_SUT import vllmSUT
+
+# vLLM/torch require the 'spawn' start method when CUDA is initialized in the
+# parent process (we do call torch.cuda.is_available() below). Using the
+# default 'fork' yields:
+#   "RuntimeError: Cannot re-initialize CUDA in forked subprocess..."
+try:
+    mp.set_start_method("spawn", force=True)
+except RuntimeError:
+    pass
 
 
 def get_args():
