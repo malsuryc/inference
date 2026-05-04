@@ -201,18 +201,17 @@ def save_evaluation_summary(postprocessed_data_dir, dice_scores):
     Stores collected DICE scores in CSV format: $(POSTPROCESSED_DATA_DIR)/summary.csv
     """
     sum_path = Path(postprocessed_data_dir, "summary.csv").absolute()
-    df = pd.DataFrame()
-
+    rows = []
     for _s in dice_scores:
         case, arr = _s
         kidney = arr[0]
         tumor = arr[1]
         composite = np.mean(arr)
-        df = df.append(
-            {"case": case, "kidney": kidney, "tumor": tumor, "composite": composite},
-            ignore_index=True,
+        rows.append(
+            {"case": case, "kidney": kidney, "tumor": tumor, "composite": composite}
         )
 
+    df = pd.DataFrame(rows)
     df.set_index("case", inplace=True)
     # consider NaN as a crash hence zero
     df.loc["mean"] = df.fillna(0).mean()
