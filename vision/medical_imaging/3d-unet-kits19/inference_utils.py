@@ -52,7 +52,7 @@ def gaussian_kernel(n, std):
     """
     Returns gaussian kernel; std is standard deviation and n is number of points
     """
-    gaussian1D = signal.gaussian(n, std)
+    gaussian1D = signal.windows.gaussian(n, std)
     gaussian2D = np.outer(gaussian1D, gaussian1D)
     gaussian3D = np.outer(gaussian2D, gaussian1D)
     gaussian3D = gaussian3D.reshape(n, n, n)
